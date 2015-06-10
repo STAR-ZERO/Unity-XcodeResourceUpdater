@@ -1,0 +1,120 @@
+#!/usr/bin/env ruby
+
+require 'xcodeproj'
+require 'fileutils'
+
+def get_child_group(parent_group, name)
+  parent_group.groups.find { |g| g.path == name || g.name == name }
+end
+
+def get_file_ref(group, name)
+  group.files.find { |f| f.path == name || f.name == name }
+end
+
+def get_localize_group(group, name)
+  group.children.find { |child|
+    child.instance_of?(Xcodeproj::Project::Object::PBXVariantGroup) && child.name == name
+  }
+end
+
+def add_resource_file(target, group, name)
+  build_phase = target.resources_build_phase
+
+  return if get_file_ref(group, name)
+
+  file_ref = group.new_reference(name)
+  build_phase.add_file_reference(file_ref)
+end
+
+def add_localize_file(project, target, group, localize_hash, dir_name, strings_name)
+
+  localize_group = localize_hash[strings_name]
+  unless localize_group
+    localize_group = get_localize_group(group, strings_name)
+    unless localize_group
+      localize_group = project.new(Xcodeproj::Project::Object::PBXVariantGroup)
+      localize_group.name = strings_name
+      group << localize_group
+      target.resources_build_phase.add_file_reference(localize_group)
+    end
+    localize_hash[strings_name] = localize_group
+  end
+
+  return if get_file_ref(localize_group, dir_name + '/' + strings_name)
+
+  localize_group.new_reference(dir_name + '/' + strings_name)
+end
+
+def add_resources(project, target, path, parent_group, group_name)
+
+  group = get_child_group(parent_group, group_name)
+  unless group
+    group = parent_group.new_group(group_name, group_name)
+  end
+
+  localize_hash = {}
+
+  Dir.glob(path + '/*').each do |file|
+    if FileTest::directory?(file)
+
+      name = File.basename(file)
+
+      case name
+      when /\.lproj$/
+        # localize
+
+        Dir.glob(file + '/*.strings') do |strings|
+          add_localize_file(project, target, group, localize_hash, name, File.basename(strings))
+        end
+      when /\.xcassets$/
+        # AssetCatalog
+
+        add_resource_file(target, group, name)
+
+      else
+        # Directory
+
+        add_resources(project, target, file, group, name)
+      end
+    else
+
+      name = File.basename(file)
+      extension = File.extname(file)
+
+      if /^\.(png|jpg|jpeg|gif|tiff|plist|txt|json|xib|storyboard)$/i =~extension
+        # resource
+        add_resource_file(target, group, name)
+      end
+    end
+  end
+
+end
+
+BUILD_PATH = ARGV[0]
+PROJECT_PATH = BUILD_PATH + '/Unity-iPhone.xcodeproj'
+SRC_PATH = File.expand_path('../../../../NativeResources/iOS', __FILE__)
+DEST_PATH = BUILD_PATH + '/Libraries/Resources'
+
+# Copy directory
+if Dir.exists?(DEST_PATH)
+  FileUtils.rm_r(DEST_PATH)
+end
+FileUtils.cp_r(SRC_PATH, DEST_PATH)
+
+# Project intialize
+project = Xcodeproj::Project.new(PROJECT_PATH)
+project.initialize_from_file
+
+# Get tareget
+target = project.targets.find { |t| t.name == 'Unity-iPhone' }
+
+# "Libraries" group
+libraries_group = project.main_group.children.find { |child|
+  child.path == 'Libraries'
+}
+
+# Add file to XcodeProject
+add_resources(project, target, DEST_PATH, libraries_group, 'Resources')
+
+project.save
+

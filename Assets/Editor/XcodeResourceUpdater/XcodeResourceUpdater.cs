@@ -6,7 +6,7 @@ using System.Diagnostics;
 public class XcodeResourceUpdater
 {
 
-    [PostProcessBuild]
+    [PostProcessBuild(9999)]
     public static void OnPostprocessBuild (BuildTarget buildTarget, string path)
     {
         UnityEngine.Debug.Log ("Path: " + path);
